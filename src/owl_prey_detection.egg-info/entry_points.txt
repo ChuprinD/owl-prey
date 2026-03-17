@@ -1,0 +1,3 @@
+[console_scripts]
+owl-inventory = owl_prey_detection.cli.stage1_inventory:main
+owl-sample = owl_prey_detection.cli.stage2_sample:main

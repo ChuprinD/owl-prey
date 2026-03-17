@@ -2,3 +2,5 @@ azure-storage-blob
 pandas
 python-dotenv
 pyyaml
+opencv-python-headless
+numpy

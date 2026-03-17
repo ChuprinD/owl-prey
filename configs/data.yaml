@@ -1,0 +1,9 @@
+sampling:
+  max_total: 120
+  max_per_location_camera: 12
+  max_per_time_bucket: 3
+  min_gap_minutes: 60
+  random_seed: 42
+
+cleaning:
+  min_duration_seconds: 5.0

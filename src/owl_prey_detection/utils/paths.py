@@ -22,6 +22,9 @@ TABLES_DIR = PROJECT_ROOT / _CONFIG["reports"]["tables_dir"]
 
 LOGS_DIR = PROJECT_ROOT / _CONFIG["logs"]["logs_dir"]
 
+EXTRACTION_OUTPUT_DIR = PROJECT_ROOT / _CONFIG.get("extraction", {}).get("output_dir", "data/processed/rawdata_frames")
+EXTRACTION_TEMP_DIR = PROJECT_ROOT / _CONFIG.get("extraction", {}).get("temp_dir", "data/raw/temp_videos")
+EXTRACTION_CHECKPOINT_DIR = PROJECT_ROOT / _CONFIG.get("extraction", {}).get("checkpoint_dir", "data/interim/checkpoints")
 
 def ensure_directories() -> None:
     directories: list[Path] = [
@@ -35,6 +38,9 @@ def ensure_directories() -> None:
         FIGURES_DIR,
         TABLES_DIR,
         LOGS_DIR,
+        EXTRACTION_OUTPUT_DIR,
+        EXTRACTION_TEMP_DIR,
+        EXTRACTION_CHECKPOINT_DIR,
     ]
 
     for directory in directories:

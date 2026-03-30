@@ -7,3 +7,11 @@ sampling:
 
 cleaning:
   min_duration_seconds: 5.0
+
+extraction:
+  skip_frames: 4
+  motion_threshold: 25
+  min_motion_pixels: 5000
+  min_sharpness: 40
+  jpeg_quality: 92
+  max_workers_offset: 2

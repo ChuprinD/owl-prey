@@ -14,3 +14,8 @@ reports:
 
 logs:
   logs_dir: logs
+
+extraction:
+  output_dir: data/processed/rawdata_frames
+  temp_dir: data/raw/temp_videos
+  checkpoint_dir: data/interim/checkpoints

@@ -7,3 +7,5 @@ Requires-Dist: azure-storage-blob
 Requires-Dist: pandas
 Requires-Dist: python-dotenv
 Requires-Dist: pyyaml
+Requires-Dist: opencv-python-headless
+Requires-Dist: numpy

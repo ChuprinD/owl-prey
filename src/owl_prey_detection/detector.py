@@ -42,46 +42,47 @@ class YoloDetector:
 
         return str(class_id)
 
-    def predict(self, image_bgr: np.ndarray) -> list[dict[str, Any]]:
-        results = self.model.predict(
-            source=image_bgr,
-            conf=self.conf,
-            iou=self.iou,
-            imgsz=self.imgsz,
-            max_det=self.max_det,
-            device=self.device,
-            augment=self.augment,
-            verbose=False,
-        )
-
-        if not results:
-            return []
-
-        result = results[0]
-
-        if result.boxes is None:
-            return []
-
-        detections: list[dict[str, Any]] = []
-
-        for box in result.boxes:
-            class_id = int(box.cls[0].item())
-            label = self._class_name(class_id)
-            confidence = float(box.conf[0].item())
-            xyxy = [float(value) for value in box.xyxy[0].tolist()]
-
-            detections.append(
-                {
-                    "class_id": class_id,
-                    "label": label,
-                    "confidence": confidence,
-                    "xyxy": xyxy,
-                }
+    def predict_batch(
+        self,
+        images_bgr: list[np.ndarray],
+        ) -> list[list[dict[str, Any]]]:
+            results = self.model.predict(
+                source=images_bgr,
+                conf=self.conf,
+                iou=self.iou,
+                imgsz=self.imgsz,
+                max_det=self.max_det,
+                device=self.device,
+                augment=self.augment,
+                verbose=False,
             )
 
-        detections.sort(
-            key=lambda item: item["confidence"],
-            reverse=True,
-        )
+            batch_detections: list[list[dict[str, Any]]] = []
 
-        return detections
+            for result in results:
+                detections: list[dict[str, Any]] = []
+
+                if result.boxes is not None:
+                    for box in result.boxes:
+                        class_id = int(box.cls[0].item())
+                        label = self._class_name(class_id)
+                        confidence = float(box.conf[0].item())
+                        xyxy = [float(value) for value in box.xyxy[0].tolist()]
+
+                        detections.append(
+                            {
+                                "class_id": class_id,
+                                "label": label,
+                                "confidence": confidence,
+                                "xyxy": xyxy,
+                            }
+                        )
+
+                detections.sort(
+                    key=lambda item: item["confidence"],
+                    reverse=True,
+                )
+
+                batch_detections.append(detections)
+
+            return batch_detections

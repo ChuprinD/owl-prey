@@ -34,6 +34,7 @@ class PipelineConfig:
     inference_max_det: int = 100
     inference_device: str | int | None = None
     inference_augment: bool = False
+    inference_batch_size: int = 16
 
     @staticmethod
     def from_yaml(path: str | Path) -> "PipelineConfig":
@@ -99,6 +100,7 @@ class PipelineConfig:
             inference_max_det=int(inference_raw.get("max_det", 100)),
             inference_device=inference_raw.get("device"),
             inference_augment=bool(inference_raw.get("augment", False)),
+            inference_batch_size=int(inference_raw.get("batch_size", 16)),
         )
 
     def validate(self) -> None:
@@ -139,3 +141,6 @@ class PipelineConfig:
 
         if self.inference_max_det < 1:
             raise ValueError("inference.max_det must be >= 1.")
+        
+        if self.inference_batch_size < 1:
+            raise ValueError("inference.batch_size must be >= 1.")

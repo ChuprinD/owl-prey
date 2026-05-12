@@ -5,10 +5,10 @@ import shutil
 from pathlib import Path
 from time import perf_counter
 from typing import Any
-from tqdm import tqdm
 
 import cv2
 import pandas as pd
+from tqdm import tqdm
 
 from owl_prey_detection.config import PipelineConfig
 from owl_prey_detection.detector import YoloDetector
@@ -20,6 +20,7 @@ from owl_prey_detection.frame_logic import (
 )
 from owl_prey_detection.ranking import select_top_k_frames
 from owl_prey_detection.video_io import (
+    FrameItem,
     get_video_metadata,
     iter_video_frames,
 )
@@ -51,11 +52,90 @@ def _empty_group_summary() -> dict[str, Any]:
         "count": 0,
     }
 
-def _expected_processed_frames(frame_count: int,frame_stride: int) -> int:
+
+def _expected_processed_frames(
+    frame_count: int,
+    frame_stride: int,
+) -> int:
     if frame_count <= 0:
         return 0
 
     return (frame_count + frame_stride - 1) // frame_stride
+
+
+def _process_detections_for_frame(
+    video_path: Path,
+    frame_item: FrameItem,
+    detections: list[dict[str, Any]],
+    candidate_rows: list[dict[str, Any]],
+    config: PipelineConfig,
+) -> bool:
+    group_summary = summarize_detection_groups(
+        detections=detections,
+        class_groups=config.class_groups,
+    )
+
+    is_target_frame = frame_has_required_groups(
+        group_summary=group_summary,
+        required_groups=config.required_groups,
+    )
+
+    if not is_target_frame:
+        return False
+
+    frame_score = compute_frame_score(
+        group_summary=group_summary,
+        required_groups=config.required_groups,
+    )
+
+    owl_summary = group_summary.get("owl", _empty_group_summary())
+    prey_summary = group_summary.get("prey", _empty_group_summary())
+
+    candidate_rows.append(
+        {
+            "video_path": str(video_path),
+            "frame_index": frame_item.frame_index,
+            "timestamp_sec": frame_item.timestamp_sec,
+            "is_target_frame": True,
+            "frame_score": frame_score,
+            "has_owl": bool(owl_summary["present"]),
+            "owl_score": float(owl_summary["score"]),
+            "owl_label": str(owl_summary["label"]),
+            "owl_count": int(owl_summary["count"]),
+            "has_prey": bool(prey_summary["present"]),
+            "prey_score": float(prey_summary["score"]),
+            "prey_label": str(prey_summary["label"]),
+            "prey_count": int(prey_summary["count"]),
+            "num_detections": len(detections),
+            "detections_json": json.dumps(detections),
+            "_image_bgr": frame_item.image_bgr,
+        }
+    )
+
+    return True
+
+
+def _process_batch(
+    video_path: Path,
+    batch_items: list[FrameItem],
+    batch_detections: list[list[dict[str, Any]]],
+    candidate_rows: list[dict[str, Any]],
+    config: PipelineConfig,
+) -> int:
+    total_detections = 0
+
+    for frame_item, detections in zip(batch_items, batch_detections):
+        total_detections += len(detections)
+
+        _process_detections_for_frame(
+            video_path=video_path,
+            frame_item=frame_item,
+            detections=detections,
+            candidate_rows=candidate_rows,
+            config=config,
+        )
+
+    return total_detections
 
 
 def process_video(
@@ -71,7 +151,7 @@ def process_video(
 
     total_start_time = perf_counter()
     video_metadata = get_video_metadata(video_path)
-    
+
     output_dir = config.output_dir
     review_dir = output_dir / "review_top_frames"
 
@@ -95,15 +175,11 @@ def process_video(
     video_stem = _safe_stem(video_path)
 
     candidate_rows: list[dict[str, Any]] = []
+
+    frame_extraction_runtime_sec = 0.0
     model_runtime_sec = 0.0
     frames_processed = 0
     total_detections = 0
-
-    frame_iterator = iter_video_frames(
-        video_path=video_path,
-        frame_stride=config.frame_stride,
-        sample_fps=config.sample_fps,
-    )
 
     expected_frames_to_process = _expected_processed_frames(
         frame_count=video_metadata.frame_count,
@@ -123,23 +199,33 @@ def process_video(
         unit="frame",
     )
 
+    batch_items: list[FrameItem] = []
+
     for frame_item in progress:
         frames_processed += 1
 
+        if hasattr(frame_item, "read_runtime_sec"):
+            frame_extraction_runtime_sec += frame_item.read_runtime_sec
+
+        batch_items.append(frame_item)
+
+        if len(batch_items) < config.inference_batch_size:
+            continue
+
         model_start_time = perf_counter()
-        detections = detector.predict(frame_item.image_bgr)
-        model_runtime_sec += perf_counter() - model_start_time
 
-        total_detections += len(detections)
-
-        group_summary = summarize_detection_groups(
-            detections=detections,
-            class_groups=config.class_groups,
+        batch_detections = detector.predict_batch(
+            [item.image_bgr for item in batch_items]
         )
 
-        is_target_frame = frame_has_required_groups(
-            group_summary=group_summary,
-            required_groups=config.required_groups,
+        model_runtime_sec += perf_counter() - model_start_time
+
+        total_detections += _process_batch(
+            video_path=video_path,
+            batch_items=batch_items,
+            batch_detections=batch_detections,
+            candidate_rows=candidate_rows,
+            config=config,
         )
 
         progress.set_postfix(
@@ -149,35 +235,29 @@ def process_video(
             }
         )
 
-        if not is_target_frame:
-            continue
+        batch_items = []
 
-        frame_score = compute_frame_score(
-            group_summary=group_summary,
-            required_groups=config.required_groups,
+    if batch_items:
+        model_start_time = perf_counter()
+
+        batch_detections = detector.predict_batch(
+            [item.image_bgr for item in batch_items]
         )
 
-        owl_summary = group_summary.get("owl", _empty_group_summary())
-        prey_summary = group_summary.get("prey", _empty_group_summary())
+        model_runtime_sec += perf_counter() - model_start_time
 
-        candidate_rows.append(
+        total_detections += _process_batch(
+            video_path=video_path,
+            batch_items=batch_items,
+            batch_detections=batch_detections,
+            candidate_rows=candidate_rows,
+            config=config,
+        )
+
+        progress.set_postfix(
             {
-                "video_path": str(video_path),
-                "frame_index": frame_item.frame_index,
-                "timestamp_sec": frame_item.timestamp_sec,
-                "is_target_frame": is_target_frame,
-                "frame_score": frame_score,
-                "has_owl": bool(owl_summary["present"]),
-                "owl_score": float(owl_summary["score"]),
-                "owl_label": str(owl_summary["label"]),
-                "owl_count": int(owl_summary["count"]),
-                "has_prey": bool(prey_summary["present"]),
-                "prey_score": float(prey_summary["score"]),
-                "prey_label": str(prey_summary["label"]),
-                "prey_count": int(prey_summary["count"]),
-                "num_detections": len(detections),
-                "detections_json": json.dumps(detections),
-                "_image_bgr": frame_item.image_bgr,
+                "targets": len(candidate_rows),
+                "detections": total_detections,
             }
         )
 
@@ -251,6 +331,7 @@ def process_video(
         "target_frames_found": int(len(candidates)),
         "top_frames_saved": int(len(top_review)),
         "total_detections": total_detections,
+        "frame_extraction_runtime_sec": frame_extraction_runtime_sec,
         "model_runtime_sec": model_runtime_sec,
         "total_runtime_sec": total_runtime_sec,
         "processing_fps": frames_processed / total_runtime_sec
@@ -263,6 +344,7 @@ def process_video(
             "max_det": config.inference_max_det,
             "device": config.inference_device,
             "augment": config.inference_augment,
+            "batch_size": config.inference_batch_size,
         },
         "frame_stride": config.frame_stride,
         "sample_fps": config.sample_fps,

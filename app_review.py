@@ -1,9 +1,40 @@
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
+
+REVIEW_CSV_PATTERN = re.compile(r"top(?P<top_k>\d+)_for_review\.csv$")
+
+
+def find_review_csv(run_path: Path) -> Path | None:
+    metadata_path = run_path / "run_metadata.json"
+
+    if metadata_path.exists():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            top_k = int(metadata["top_k"])
+            expected_path = run_path / f"top{top_k}_for_review.csv"
+
+            if expected_path.exists():
+                return expected_path
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+            pass
+
+    candidates = [
+        path
+        for path in run_path.glob("top*_for_review.csv")
+        if REVIEW_CSV_PATTERN.fullmatch(path.name)
+    ]
+
+    if not candidates:
+        return None
+
+    return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
 st.set_page_config(
@@ -19,14 +50,19 @@ run_dir = st.sidebar.text_input(
 )
 
 run_path = Path(run_dir)
-top5_path = run_path / "top5_for_review.csv"
+review_csv_path = find_review_csv(run_path)
 validated_path = run_path / "validated_predictions.csv"
 
-if not top5_path.exists():
-    st.error(f"Could not find {top5_path}. Run the pipeline first.")
+if review_csv_path is None:
+    st.error(
+        f"Could not find top{{K}}_for_review.csv in {run_path}. "
+        "Run the pipeline first."
+    )
     st.stop()
 
-df = pd.read_csv(top5_path)
+st.sidebar.caption(f"Review CSV: {review_csv_path.name}")
+
+df = pd.read_csv(review_csv_path)
 
 if df.empty:
     st.warning("No target frames were found.")

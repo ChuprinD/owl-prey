@@ -1,0 +1,52 @@
+{
+  "video_path": "data\\videos\\downloaded\\Vosseveld\\Vosseveld_ch2_20240525013955_20240525014035.mp4",
+  "model_path": "models\\best.pt",
+  "video_duration_sec": 43.68,
+  "video_fps": 25.0,
+  "video_frame_count": 1092,
+  "video_width": 2560,
+  "video_height": 1440,
+  "frames_processed": 1092,
+  "target_frames_found": 8,
+  "top_frames_saved": 3,
+  "total_detections": 70,
+  "frame_extraction_runtime_sec": 7.936769700332661,
+  "model_runtime_sec": 40.99973849998787,
+  "total_runtime_sec": 54.68927210000402,
+  "processing_fps": 19.967352975610726,
+  "inference": {
+    "conf": 0.5,
+    "iou": 0.6,
+    "imgsz": 640,
+    "max_det": 10,
+    "device": null,
+    "augment": false,
+    "batch_size": 32
+  },
+  "frame_stride": 1,
+  "sample_fps": null,
+  "class_groups": {
+    "owl": [
+      "steenuil"
+    ],
+    "prey": [
+      "boismuis",
+      "larve",
+      "loopkever",
+      "meikever",
+      "nachtvlinder",
+      "regenworm",
+      "spin",
+      "spitsmuis",
+      "sprinkhaan",
+      "veldmuis",
+      "vogel_prooi"
+    ]
+  },
+  "required_groups": [
+    "owl",
+    "prey"
+  ],
+  "top_k": 3,
+  "min_gap_seconds": 1.0
+}

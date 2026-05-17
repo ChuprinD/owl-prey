@@ -1,0 +1,50 @@
+model_path: models/best.pt
+output_dir: runs/demo
+
+input:
+  # local or azure_blob
+  source: azure_blob
+
+  blob_name: "Vosseveld/Vosseveld_ch2_20240525013955_20240525014035.mp4"
+
+  # For local:
+  video_path: data/videos/example.mp4
+
+  download_dir: data/videos/downloaded
+  overwrite_download: false
+
+frame_stride: 1
+sample_fps: null
+
+inference:
+  conf: 0.5
+  iou: 0.6
+  imgsz: 640
+  max_det: 10
+  device: null
+  augment: false
+  batch_size: 32
+
+class_groups:
+  owl:
+    - steenuil
+  prey:
+    - boismuis
+    - larve
+    - loopkever
+    - meikever
+    - nachtvlinder
+    - regenworm
+    - spin
+    - spitsmuis
+    - sprinkhaan
+    - veldmuis
+    - vogel_prooi
+
+
+required_groups:
+  - owl
+  - prey
+
+top_k: 3
+min_gap_seconds: 1.0

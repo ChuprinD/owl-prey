@@ -5,7 +5,7 @@ input:
   # local or azure_blob
   source: azure_blob
 
-  blob_name: "Vosseveld/Vosseveld_ch2_20240530021818_20240530021936.mp4"
+  blob_name: "Vosseveld/Vosseveld_ch2_20240525013955_20240525014035.mp4"
 
   # For local:
   video_path: data/videos/example.mp4
@@ -21,9 +21,9 @@ inference:
   iou: 0.6
   imgsz: 640
   max_det: 10
-  device: cpu
+  device: null
   augment: false
-  batch_size: 16
+  batch_size: 32
 
 class_groups:
   owl:
@@ -39,7 +39,7 @@ class_groups:
     - spitsmuis
     - sprinkhaan
     - veldmuis
-    - vogel
+    - vogel_prooi
 
 
 required_groups:

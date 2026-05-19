@@ -1,7 +1,13 @@
 .env
 .venv/
-data/
+data/*
+!data/videos/
+data/videos/*
+!data/videos/demo1.mp4
+!data/videos/demo2.mp4
+!data/videos/demo3.mp4
 __pycache__/
 *.pyc
 *.csv
 *.jpg
+runs/*

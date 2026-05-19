@@ -17,13 +17,22 @@ frame_stride: 1
 sample_fps: null
 
 inference:
-  conf: 0.5
+  conf: 0.15
   iou: 0.6
   imgsz: 640
   max_det: 2
   device: null
   augment: false
   batch_size: 32
+
+postprocess:
+  min_conf_by_group:
+    owl: 0.5
+    prey: 0.15
+  max_area_ratio_by_group:
+    owl: 0.25
+  min_area_ratio_by_group:
+    prey: 0.00002
 
 class_groups:
   owl:

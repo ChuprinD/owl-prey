@@ -15,6 +15,7 @@ from owl_prey_detection.detector import YoloDetector
 from owl_prey_detection.draw import draw_detections
 from owl_prey_detection.frame_logic import (
     compute_frame_score,
+    filter_detections_by_group_rules,
     frame_has_required_groups,
     summarize_detection_groups,
 )
@@ -124,7 +125,18 @@ def _process_batch(
 ) -> int:
     total_detections = 0
 
-    for frame_item, detections in zip(batch_items, batch_detections):
+    for frame_item, raw_detections in zip(batch_items, batch_detections):
+        image_height, image_width = frame_item.image_bgr.shape[:2]
+        detections = filter_detections_by_group_rules(
+            detections=raw_detections,
+            class_groups=config.class_groups,
+            image_width=image_width,
+            image_height=image_height,
+            min_conf_by_group=config.postprocess_min_conf_by_group,
+            max_area_ratio_by_group=config.postprocess_max_area_ratio_by_group,
+            min_area_ratio_by_group=config.postprocess_min_area_ratio_by_group,
+        )
+
         total_detections += len(detections)
 
         _process_detections_for_frame(
@@ -345,6 +357,15 @@ def process_video(
             "device": config.inference_device,
             "augment": config.inference_augment,
             "batch_size": config.inference_batch_size,
+        },
+        "postprocess": {
+            "min_conf_by_group": config.postprocess_min_conf_by_group,
+            "max_area_ratio_by_group": (
+                config.postprocess_max_area_ratio_by_group
+            ),
+            "min_area_ratio_by_group": (
+                config.postprocess_min_area_ratio_by_group
+            ),
         },
         "frame_stride": config.frame_stride,
         "sample_fps": config.sample_fps,

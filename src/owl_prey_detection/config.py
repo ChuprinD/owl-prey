@@ -36,6 +36,10 @@ class PipelineConfig:
     inference_augment: bool = False
     inference_batch_size: int = 16
 
+    postprocess_min_conf_by_group: dict[str, float] = field(default_factory=dict)
+    postprocess_max_area_ratio_by_group: dict[str, float] = field(default_factory=dict)
+    postprocess_min_area_ratio_by_group: dict[str, float] = field(default_factory=dict)
+
     @staticmethod
     def from_yaml(path: str | Path) -> "PipelineConfig":
         path = Path(path)
@@ -48,6 +52,7 @@ class PipelineConfig:
         inference_raw = raw.get("inference", {}) or {}
         selection_raw = raw.get("selection", {}) or {}
         input_raw = raw.get("input", {}) or {}
+        postprocess_raw = raw.get("postprocess", {}) or {}
 
         model_path = Path(raw.get("model_path", "models/best.pt"))
         output_dir = Path(raw.get("output_dir", "runs/demo"))
@@ -101,6 +106,24 @@ class PipelineConfig:
             inference_device=inference_raw.get("device"),
             inference_augment=bool(inference_raw.get("augment", False)),
             inference_batch_size=int(inference_raw.get("batch_size", 16)),
+            postprocess_min_conf_by_group={
+                str(group_name): float(value)
+                for group_name, value in (
+                    postprocess_raw.get("min_conf_by_group", {}) or {}
+                ).items()
+            },
+            postprocess_max_area_ratio_by_group={
+                str(group_name): float(value)
+                for group_name, value in (
+                    postprocess_raw.get("max_area_ratio_by_group", {}) or {}
+                ).items()
+            },
+            postprocess_min_area_ratio_by_group={
+                str(group_name): float(value)
+                for group_name, value in (
+                    postprocess_raw.get("min_area_ratio_by_group", {}) or {}
+                ).items()
+            },
         )
 
     def validate(self) -> None:
@@ -144,3 +167,40 @@ class PipelineConfig:
         
         if self.inference_batch_size < 1:
             raise ValueError("inference.batch_size must be >= 1.")
+
+        self._validate_postprocess_thresholds(
+            thresholds=self.postprocess_min_conf_by_group,
+            name="postprocess.min_conf_by_group",
+            min_value=0.0,
+            max_value=1.0,
+        )
+        self._validate_postprocess_thresholds(
+            thresholds=self.postprocess_max_area_ratio_by_group,
+            name="postprocess.max_area_ratio_by_group",
+            min_value=0.0,
+            max_value=1.0,
+        )
+        self._validate_postprocess_thresholds(
+            thresholds=self.postprocess_min_area_ratio_by_group,
+            name="postprocess.min_area_ratio_by_group",
+            min_value=0.0,
+            max_value=1.0,
+        )
+
+    def _validate_postprocess_thresholds(
+        self,
+        thresholds: dict[str, float],
+        name: str,
+        min_value: float,
+        max_value: float,
+    ) -> None:
+        for group_name, value in thresholds.items():
+            if group_name not in self.class_groups:
+                raise ValueError(
+                    f"{name} contains unknown group '{group_name}'."
+                )
+
+            if not min_value <= value <= max_value:
+                raise ValueError(
+                    f"{name}.{group_name} must be in [{min_value}, {max_value}]."
+                )

@@ -360,7 +360,7 @@ def process_video(
     )
 
     return {
-        "top5_for_review": top_csv,
+        "top_for_review": top_csv,
         "metadata": metadata_json,
         "review_dir": review_dir,
     }

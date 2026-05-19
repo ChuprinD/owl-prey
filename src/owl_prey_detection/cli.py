@@ -45,7 +45,7 @@ def main() -> None:
     print(f"Frames processed: {metadata['frames_processed']}")
     print(f"Target frames found: {metadata['target_frames_found']}")
     print(f"Top frames saved: {metadata['top_frames_saved']}")
-    print(f"Top-5 CSV: {outputs['top5_for_review']}")
+    print(f"Top-{config.top_k} CSV: {outputs['top_for_review']}")
     print(f"Review frames: {outputs['review_dir']}")
 
 

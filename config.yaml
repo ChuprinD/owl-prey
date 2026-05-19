@@ -3,12 +3,12 @@ output_dir: runs/demo
 
 input:
   # local or azure_blob
-  source: azure_blob
+  source: local
 
-  blob_name: "Vosseveld/Vosseveld_ch2_20240525013955_20240525014035.mp4"
+  blob_name: "Vosseveld/Vosseveld_ch2_20240610043904_20240610043955.mp4"
 
   # For local:
-  video_path: data/videos/example.mp4
+  video_path: data/videos/demo1.mp4
 
   download_dir: data/videos/downloaded
   overwrite_download: false
@@ -20,7 +20,7 @@ inference:
   conf: 0.5
   iou: 0.6
   imgsz: 640
-  max_det: 10
+  max_det: 2
   device: null
   augment: false
   batch_size: 32

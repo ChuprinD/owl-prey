@@ -58,7 +58,7 @@ min_gap_seconds: 0.1
 audio:
   # Set to true to run the audio-guided pipeline. Set to false to use the
   # normal frame-scanning pipeline.
-  enabled: true
+  enabled: false
   threshold_db: -20.0
   padding_seconds: 2.0
   min_event_seconds: 0.2

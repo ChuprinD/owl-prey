@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import re
 from pathlib import Path
@@ -8,17 +6,21 @@ import pandas as pd
 import streamlit as st
 
 
-REVIEW_CSV_PATTERN = re.compile(r"top(?P<top_k>\d+)_for_review\.csv$")
+REVIEW_CSV_PATTERN = re.compile(r"top(?P<top_k>\d+|_all)_for_review\.csv$")
 
 
-def find_review_csv(run_path: Path) -> Path | None:
+def find_review_csv(run_path):
     metadata_path = run_path / "run_metadata.json"
 
     if metadata_path.exists():
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            top_k = int(metadata["top_k"])
-            expected_path = run_path / f"top{top_k}_for_review.csv"
+            top_k = metadata["top_k"]
+
+            if top_k == "all":
+                expected_path = run_path / "top_all_for_review.csv"
+            else:
+                expected_path = run_path / f"top{int(top_k)}_for_review.csv"
 
             if expected_path.exists():
                 return expected_path
@@ -55,7 +57,7 @@ validated_path = run_path / "validated_predictions.csv"
 
 if review_csv_path is None:
     st.error(
-        f"Could not find top{{K}}_for_review.csv in {run_path}. "
+        f"Could not find top{{K}}_for_review.csv or top_all_for_review.csv in {run_path}. "
         "Run the pipeline first."
     )
     st.stop()

@@ -11,3 +11,4 @@ __pycache__/
 *.csv
 *.jpg
 runs/*
+scripts/*

@@ -1,6 +1,3 @@
-from __future__ import annotations
-
-import argparse
 import json
 
 from owl_prey_detection.config import PipelineConfig
@@ -8,7 +5,7 @@ from owl_prey_detection.data_access.video_source import resolve_input_video
 from owl_prey_detection.pipeline import process_video
 
 
-def format_seconds(seconds: float) -> str:
+def format_seconds(seconds):
     seconds = float(seconds)
 
     hours = int(seconds // 3600)
@@ -23,8 +20,8 @@ def format_seconds(seconds: float) -> str:
 
     return f"{secs:.1f}s"
 
-def main() -> None:
 
+def main():
     config = PipelineConfig.from_yaml("config.yaml")
     config.validate()
 
@@ -39,13 +36,22 @@ def main() -> None:
         metadata = json.load(file)
 
     print("Pipeline finished.")
+    print(f"Mode: {metadata.get('pipeline_mode', 'visual')}")
     print(f"Video duration: {format_seconds(metadata['video_duration_sec'])}")
+    if "audio_analysis_runtime_sec" in metadata:
+        print(
+            "Audio analysis time: "
+            f"{format_seconds(metadata['audio_analysis_runtime_sec'])}"
+        )
     print(f"Model time: {format_seconds(metadata['model_runtime_sec'])}")
     print(f"Total time: {format_seconds(metadata['total_runtime_sec'])}")
-    print(f"Frames processed: {metadata['frames_processed']}")
+    print(
+        "Frames processed: "
+        f"{metadata.get('frames_processed', metadata.get('frames_scanned', 0))}"
+    )
     print(f"Target frames found: {metadata['target_frames_found']}")
     print(f"Top frames saved: {metadata['top_frames_saved']}")
-    print(f"Top-{config.top_k} CSV: {outputs['top_for_review']}")
+    print(f"Review CSV: {outputs['top_for_review']}")
     print(f"Review frames: {outputs['review_dir']}")
 
 

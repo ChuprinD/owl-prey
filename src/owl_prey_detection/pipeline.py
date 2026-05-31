@@ -1,51 +1,33 @@
-from __future__ import annotations
-
 import json
 import shutil
 from pathlib import Path
 from time import perf_counter
-from typing import Any
 
-import cv2
 import pandas as pd
 from tqdm import tqdm
 
-from owl_prey_detection.config import PipelineConfig
 from owl_prey_detection.detector import YoloDetector
-from owl_prey_detection.draw import draw_detections
 from owl_prey_detection.frame_logic import (
     compute_frame_score,
     filter_detections_by_group_rules,
     frame_has_required_groups,
     summarize_detection_groups,
 )
-from owl_prey_detection.ranking import select_top_k_frames
+from owl_prey_detection.review import (
+    save_top_frames,
+    select_top_frames,
+    top_k_filename,
+)
 from owl_prey_detection.video_io import (
-    FrameItem,
+    count_interval_frames,
     get_video_metadata,
     iter_video_frames,
+    iter_video_frames_in_intervals,
+    resolve_stride,
 )
 
 
-def _safe_stem(path: Path) -> str:
-    return path.stem.replace(" ", "_")
-
-
-def _frame_filename(
-    video_stem: str,
-    rank: int,
-    frame_index: int,
-    timestamp_sec: float,
-) -> str:
-    return (
-        f"top_{rank:02d}_"
-        f"{video_stem}_"
-        f"f{frame_index:08d}_"
-        f"t{timestamp_sec:010.3f}.jpg"
-    )
-
-
-def _empty_group_summary() -> dict[str, Any]:
+def _empty_group_summary():
     return {
         "present": False,
         "score": 0.0,
@@ -54,40 +36,39 @@ def _empty_group_summary() -> dict[str, Any]:
     }
 
 
-def _expected_processed_frames(
-    frame_count: int,
-    frame_stride: int,
-) -> int:
+def _expected_processed_frames(frame_count, stride):
     if frame_count <= 0:
         return 0
 
-    return (frame_count + frame_stride - 1) // frame_stride
+    return (frame_count + stride - 1) // stride
+
+
+def _create_detector(config):
+    return YoloDetector(
+        model_path=config.model_path,
+        conf=config.inference_conf,
+        iou=config.inference_iou,
+        imgsz=config.inference_imgsz,
+        max_det=config.inference_max_det,
+        device=config.inference_device,
+        augment=config.inference_augment,
+    )
 
 
 def _process_detections_for_frame(
-    video_path: Path,
-    frame_item: FrameItem,
-    detections: list[dict[str, Any]],
-    candidate_rows: list[dict[str, Any]],
-    config: PipelineConfig,
-) -> bool:
+    video_path,
+    frame_item,
+    detections,
+    candidate_rows,
+    config,
+):
     group_summary = summarize_detection_groups(
         detections=detections,
         class_groups=config.class_groups,
     )
 
-    is_target_frame = frame_has_required_groups(
-        group_summary=group_summary,
-        required_groups=config.required_groups,
-    )
-
-    if not is_target_frame:
-        return False
-
-    frame_score = compute_frame_score(
-        group_summary=group_summary,
-        required_groups=config.required_groups,
-    )
+    if not frame_has_required_groups(group_summary, config.required_groups):
+        return
 
     owl_summary = group_summary.get("owl", _empty_group_summary())
     prey_summary = group_summary.get("prey", _empty_group_summary())
@@ -98,7 +79,10 @@ def _process_detections_for_frame(
             "frame_index": frame_item.frame_index,
             "timestamp_sec": frame_item.timestamp_sec,
             "is_target_frame": True,
-            "frame_score": frame_score,
+            "frame_score": compute_frame_score(
+                group_summary,
+                config.required_groups,
+            ),
             "has_owl": bool(owl_summary["present"]),
             "owl_score": float(owl_summary["score"]),
             "owl_label": str(owl_summary["label"]),
@@ -113,32 +97,28 @@ def _process_detections_for_frame(
         }
     )
 
-    return True
-
 
 def _process_batch(
-    video_path: Path,
-    batch_items: list[FrameItem],
-    batch_detections: list[list[dict[str, Any]]],
-    candidate_rows: list[dict[str, Any]],
-    config: PipelineConfig,
-) -> int:
+    video_path,
+    batch_items,
+    detector,
+    candidate_rows,
+    config,
+):
+    start_time = perf_counter()
+    batch_detections = detector.predict_batch(
+        [item.image_bgr for item in batch_items]
+    )
+    model_runtime_sec = perf_counter() - start_time
     total_detections = 0
 
     for frame_item, raw_detections in zip(batch_items, batch_detections):
-        image_height, image_width = frame_item.image_bgr.shape[:2]
         detections = filter_detections_by_group_rules(
             detections=raw_detections,
             class_groups=config.class_groups,
-            image_width=image_width,
-            image_height=image_height,
             min_conf_by_group=config.postprocess_min_conf_by_group,
-            max_area_ratio_by_group=config.postprocess_max_area_ratio_by_group,
-            min_area_ratio_by_group=config.postprocess_min_area_ratio_by_group,
         )
-
         total_detections += len(detections)
-
         _process_detections_for_frame(
             video_path=video_path,
             frame_item=frame_item,
@@ -147,15 +127,92 @@ def _process_batch(
             config=config,
         )
 
-    return total_detections
+    return model_runtime_sec, total_detections
 
 
-def process_video(
-    video_path: str | Path,
-    config: PipelineConfig,
-) -> dict[str, Path]:
+def _scan_frames(
+    video_path,
+    frame_iterator,
+    expected_frames,
+    config,
+):
+    candidates = []
+    detector = None
+    batch_items = []
+    total_detections = 0
+    frames_processed = 0
+    frame_extraction_runtime_sec = 0.0
+    model_runtime_sec = 0.0
+    progress = tqdm(
+        frame_iterator,
+        total=expected_frames,
+        desc="Processing video",
+        unit="frame",
+    )
+
+    for frame_item in progress:
+        frames_processed += 1
+        frame_extraction_runtime_sec += frame_item.read_runtime_sec
+        batch_items.append(frame_item)
+
+        if len(batch_items) < config.inference_batch_size:
+            continue
+
+        if detector is None:
+            detector = _create_detector(config)
+
+        runtime_sec, detections_count = _process_batch(
+            video_path=video_path,
+            batch_items=batch_items,
+            detector=detector,
+            candidate_rows=candidates,
+            config=config,
+        )
+        model_runtime_sec += runtime_sec
+        total_detections += detections_count
+        progress.set_postfix(
+            targets=len(candidates),
+            detections=total_detections,
+        )
+        batch_items = []
+
+    if batch_items:
+        if detector is None:
+            detector = _create_detector(config)
+
+        runtime_sec, detections_count = _process_batch(
+            video_path=video_path,
+            batch_items=batch_items,
+            detector=detector,
+            candidate_rows=candidates,
+            config=config,
+        )
+        model_runtime_sec += runtime_sec
+        total_detections += detections_count
+
+    return (
+        pd.DataFrame(candidates),
+        frames_processed,
+        total_detections,
+        frame_extraction_runtime_sec,
+        model_runtime_sec,
+    )
+
+
+def _inference_metadata(config):
+    return {
+        "conf": config.inference_conf,
+        "iou": config.inference_iou,
+        "imgsz": config.inference_imgsz,
+        "max_det": config.inference_max_det,
+        "device": config.inference_device,
+        "augment": config.inference_augment,
+        "batch_size": config.inference_batch_size,
+    }
+
+
+def process_video(video_path, config):
     config.validate()
-
     video_path = Path(video_path)
 
     if not video_path.exists():
@@ -163,175 +220,100 @@ def process_video(
 
     total_start_time = perf_counter()
     video_metadata = get_video_metadata(video_path)
-
+    mode = "audio_guided" if config.audio_enabled else "visual"
     output_dir = config.output_dir
-    review_dir = output_dir / "review_top_frames"
 
+    review_dir = output_dir / "review_top_frames"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if review_dir.exists():
         shutil.rmtree(review_dir)
 
-    review_dir.mkdir(parents=True, exist_ok=True)
-
-    detector = YoloDetector(
-        model_path=config.model_path,
-        conf=config.inference_conf,
-        iou=config.inference_iou,
-        imgsz=config.inference_imgsz,
-        max_det=config.inference_max_det,
-        device=config.inference_device,
-        augment=config.inference_augment,
-    )
-
-    video_stem = _safe_stem(video_path)
-
-    candidate_rows: list[dict[str, Any]] = []
-
-    frame_extraction_runtime_sec = 0.0
-    model_runtime_sec = 0.0
-    frames_processed = 0
-    total_detections = 0
-
-    expected_frames_to_process = _expected_processed_frames(
-        frame_count=video_metadata.frame_count,
-        frame_stride=config.frame_stride,
-    )
-
-    frame_iterator = iter_video_frames(
-        video_path=video_path,
+    review_dir.mkdir(parents=True)
+    stride = resolve_stride(
+        video_fps=video_metadata.fps,
         frame_stride=config.frame_stride,
         sample_fps=config.sample_fps,
     )
+    audio_metadata = {}
 
-    progress = tqdm(
-        frame_iterator,
-        total=expected_frames_to_process,
-        desc="Processing video",
-        unit="frame",
-    )
+    if config.audio_enabled:
+        from owl_prey_detection.audio import analyze_audio
 
-    batch_items: list[FrameItem] = []
-
-    for frame_item in progress:
-        frames_processed += 1
-
-        if hasattr(frame_item, "read_runtime_sec"):
-            frame_extraction_runtime_sec += frame_item.read_runtime_sec
-
-        batch_items.append(frame_item)
-
-        if len(batch_items) < config.inference_batch_size:
-            continue
-
-        model_start_time = perf_counter()
-
-        batch_detections = detector.predict_batch(
-            [item.image_bgr for item in batch_items]
-        )
-
-        model_runtime_sec += perf_counter() - model_start_time
-
-        total_detections += _process_batch(
+        audio_scan = analyze_audio(
             video_path=video_path,
-            batch_items=batch_items,
-            batch_detections=batch_detections,
-            candidate_rows=candidate_rows,
-            config=config,
+            output_dir=output_dir,
+            threshold_db=config.audio_threshold_db,
+            min_event_seconds=config.audio_min_event_seconds,
+            padding_seconds=config.audio_padding_seconds,
         )
-
-        progress.set_postfix(
-            {
-                "targets": len(candidate_rows),
-                "detections": total_detections,
-            }
-        )
-
-        batch_items = []
-
-    if batch_items:
-        model_start_time = perf_counter()
-
-        batch_detections = detector.predict_batch(
-            [item.image_bgr for item in batch_items]
-        )
-
-        model_runtime_sec += perf_counter() - model_start_time
-
-        total_detections += _process_batch(
+        frame_iterator = iter_video_frames_in_intervals(
             video_path=video_path,
-            batch_items=batch_items,
-            batch_detections=batch_detections,
-            candidate_rows=candidate_rows,
-            config=config,
+            intervals=audio_scan.intervals,
+            frame_stride=config.frame_stride,
+            sample_fps=config.sample_fps,
         )
-
-        progress.set_postfix(
-            {
-                "targets": len(candidate_rows),
-                "detections": total_detections,
-            }
+        expected_frames = count_interval_frames(
+            intervals=audio_scan.intervals,
+            fps=video_metadata.fps,
+            frame_count=video_metadata.frame_count,
+            stride=stride,
         )
-
-    candidates = pd.DataFrame(candidate_rows)
-
-    if candidates.empty:
-        top_frames = candidates.copy()
+        audio_metadata = {
+            "audio_duration_sec": audio_scan.duration_sec,
+            "audio_analysis_runtime_sec": audio_scan.analysis_runtime_sec,
+            "acoustic_events_detected": audio_scan.acoustic_events_detected,
+            "merged_segments_count": len(audio_scan.intervals),
+            "early_exit_triggered": not audio_scan.intervals,
+            "audio": {
+                "enabled": True,
+                "threshold_db": config.audio_threshold_db,
+                "padding_seconds": config.audio_padding_seconds,
+                "min_event_seconds": config.audio_min_event_seconds,
+                "output_dir": str(output_dir),
+                "wav_path": str(audio_scan.output_wav),
+            },
+        }
     else:
-        top_frames = select_top_k_frames(
-            frame_predictions=candidates.drop(columns=["_image_bgr"]),
-            top_k=config.top_k,
-            min_gap_seconds=config.min_gap_seconds,
+        frame_iterator = iter_video_frames(
+            video_path=video_path,
+            frame_stride=config.frame_stride,
+            sample_fps=config.sample_fps,
+        )
+        expected_frames = _expected_processed_frames(
+            frame_count=video_metadata.frame_count,
+            stride=stride,
         )
 
-    top_rows: list[dict[str, Any]] = []
-
-    for index, row in top_frames.iterrows():
-        frame_index = int(row["frame_index"])
-        timestamp_sec = float(row["timestamp_sec"])
-        rank = index + 1
-
-        source_match = candidates[candidates["frame_index"] == frame_index]
-
-        if source_match.empty:
-            continue
-
-        source_row = source_match.iloc[0]
-        image_bgr = source_row["_image_bgr"]
-        detections = json.loads(str(source_row["detections_json"]))
-
-        filename = _frame_filename(
-            video_stem=video_stem,
-            rank=rank,
-            frame_index=frame_index,
-            timestamp_sec=timestamp_sec,
-        )
-
-        image_path = review_dir / filename
-
-        annotated_image = draw_detections(
-            image_bgr=image_bgr,
-            detections=detections,
-        )
-
-        cv2.imwrite(str(image_path), annotated_image)
-
-        row_dict = row.to_dict()
-        row_dict["review_rank"] = rank
-        row_dict["review_image_path"] = str(image_path)
-
-        top_rows.append(row_dict)
-
-    top_review = pd.DataFrame(top_rows)
-
-    top_csv = output_dir / f"top{config.top_k}_for_review.csv"
+    (
+        candidates,
+        frames_processed,
+        total_detections,
+        frame_runtime,
+        model_runtime,
+    ) = _scan_frames(
+        video_path=video_path,
+        frame_iterator=frame_iterator,
+        expected_frames=expected_frames,
+        config=config,
+    )
+    top_frames = select_top_frames(
+        candidates=candidates,
+        top_k=config.top_k,
+        min_gap_seconds=config.min_gap_seconds,
+    )
+    top_review = save_top_frames(
+        candidates=candidates,
+        top_frames=top_frames,
+        review_dir=review_dir,
+        video_path=video_path,
+    )
+    top_csv = output_dir / top_k_filename(config.top_k)
     metadata_json = output_dir / "run_metadata.json"
-
     top_review.to_csv(top_csv, index=False)
-
     total_runtime_sec = perf_counter() - total_start_time
-
     metadata = {
+        "pipeline_mode": mode,
         "video_path": str(video_path),
         "model_path": str(config.model_path),
         "video_duration_sec": video_metadata.duration_sec,
@@ -343,29 +325,17 @@ def process_video(
         "target_frames_found": int(len(candidates)),
         "top_frames_saved": int(len(top_review)),
         "total_detections": total_detections,
-        "frame_extraction_runtime_sec": frame_extraction_runtime_sec,
-        "model_runtime_sec": model_runtime_sec,
+        "frame_extraction_runtime_sec": frame_runtime,
+        "model_runtime_sec": model_runtime,
         "total_runtime_sec": total_runtime_sec,
-        "processing_fps": frames_processed / total_runtime_sec
-        if total_runtime_sec > 0
-        else 0.0,
-        "inference": {
-            "conf": config.inference_conf,
-            "iou": config.inference_iou,
-            "imgsz": config.inference_imgsz,
-            "max_det": config.inference_max_det,
-            "device": config.inference_device,
-            "augment": config.inference_augment,
-            "batch_size": config.inference_batch_size,
-        },
+        "processing_fps": (
+            frames_processed / total_runtime_sec
+            if total_runtime_sec > 0
+            else 0.0
+        ),
+        "inference": _inference_metadata(config),
         "postprocess": {
             "min_conf_by_group": config.postprocess_min_conf_by_group,
-            "max_area_ratio_by_group": (
-                config.postprocess_max_area_ratio_by_group
-            ),
-            "min_area_ratio_by_group": (
-                config.postprocess_min_area_ratio_by_group
-            ),
         },
         "frame_stride": config.frame_stride,
         "sample_fps": config.sample_fps,
@@ -373,7 +343,11 @@ def process_video(
         "required_groups": config.required_groups,
         "top_k": config.top_k,
         "min_gap_seconds": config.min_gap_seconds,
+        **audio_metadata,
     }
+
+    if config.audio_enabled:
+        metadata["frames_scanned"] = frames_processed
 
     metadata_json.write_text(
         json.dumps(metadata, indent=2),

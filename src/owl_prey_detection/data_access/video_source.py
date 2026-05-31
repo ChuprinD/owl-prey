@@ -1,14 +1,7 @@
-from __future__ import annotations
-
-from pathlib import Path, PurePosixPath
-
-from owl_prey_detection.config import PipelineConfig
+from pathlib import PurePosixPath
 
 
-def _blob_name_to_local_path(
-    blob_name: str,
-    download_dir: Path,
-) -> Path:
+def _blob_name_to_local_path(blob_name, download_dir):
     from owl_prey_detection.data_access.azure_blob import normalize_blob_name
 
     normalized_blob_name = normalize_blob_name(blob_name)
@@ -20,7 +13,7 @@ def _blob_name_to_local_path(
     return download_dir.joinpath(*blob_path.parts)
 
 
-def resolve_input_video(config: PipelineConfig) -> Path:
+def resolve_input_video(config):
     if config.input_source == "local":
         if config.video_path is None:
             raise ValueError("input.video_path must be set when source is local.")

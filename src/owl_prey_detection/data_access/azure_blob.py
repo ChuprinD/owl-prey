@@ -1,19 +1,13 @@
-from __future__ import annotations
-
-from pathlib import Path, PurePosixPath
-from typing import Iterable
+import os
+from pathlib import PurePosixPath
 from urllib.parse import unquote, urlparse
 
 from azure.core.exceptions import ResourceNotFoundError
-from azure.storage.blob import BlobProperties, BlobServiceClient
-
-from owl_prey_detection.data_access.secret_access import (
-    AZURE_CONNECTION_STRING,
-    AZURE_CONTAINER_NAME,
-)
+from azure.storage.blob import BlobServiceClient
+from dotenv import load_dotenv
 
 
-def normalize_blob_name(blob_name: str) -> str:
+def normalize_blob_name(blob_name):
     blob_name = blob_name.strip().replace("\\", "/")
 
     parsed = urlparse(blob_name)
@@ -35,14 +29,26 @@ def normalize_blob_name(blob_name: str) -> str:
 class AzureBlobClient:
     def __init__(
         self,
-        connection_string: str = AZURE_CONNECTION_STRING,
-        container_name: str = AZURE_CONTAINER_NAME,
-    ) -> None:
+        connection_string=None,
+        container_name=None,
+    ):
+        load_dotenv()
+
+        if connection_string is None:
+            connection_string = os.getenv("AZURE_CONNECTION_STRING")
+
+        if container_name is None:
+            container_name = os.getenv("AZURE_CONTAINER_NAME")
+
         if not connection_string:
-            raise ValueError("AZURE_CONNECTION_STRING is empty.")
+            raise RuntimeError(
+                "Environment variable AZURE_CONNECTION_STRING is not set."
+            )
 
         if not container_name:
-            raise ValueError("AZURE_CONTAINER_NAME is empty.")
+            raise RuntimeError(
+                "Environment variable AZURE_CONTAINER_NAME is not set."
+            )
 
         self._container_name = container_name
 
@@ -56,13 +62,13 @@ class AzureBlobClient:
 
     def list_blobs(
         self,
-        name_starts_with: str | None = None,
-    ) -> Iterable[BlobProperties]:
+        name_starts_with=None,
+    ):
         return self._container_client.list_blobs(
             name_starts_with=name_starts_with
         )
 
-    def blob_exists(self, blob_name: str) -> bool:
+    def blob_exists(self, blob_name):
         blob_name = normalize_blob_name(blob_name)
         blob_client = self._container_client.get_blob_client(blob_name)
 
@@ -70,12 +76,12 @@ class AzureBlobClient:
 
     def find_blob_names_by_filename(
         self,
-        filename: str,
-        max_scan: int = 100_000,
-    ) -> list[str]:
+        filename,
+        max_scan=100_000,
+    ):
         target_filename = PurePosixPath(filename).name.lower()
 
-        matches: list[str] = []
+        matches = []
         scanned = 0
 
         for blob in self.list_blobs():
@@ -91,7 +97,7 @@ class AzureBlobClient:
 
         return matches
 
-    def resolve_blob_name(self, blob_name: str) -> str:
+    def resolve_blob_name(self, blob_name):
         requested_blob_name = normalize_blob_name(blob_name)
 
         if self.blob_exists(requested_blob_name):
@@ -122,10 +128,10 @@ class AzureBlobClient:
 
     def download_blob(
         self,
-        blob_name: str,
-        destination_path: Path,
-        overwrite: bool = False,
-    ) -> Path:
+        blob_name,
+        destination_path,
+        overwrite=False,
+    ):
         resolved_blob_name = self.resolve_blob_name(blob_name)
 
         destination_path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,7 +144,7 @@ class AzureBlobClient:
         try:
             with destination_path.open("wb") as file:
                 stream = blob_client.download_blob()
-                file.write(stream.readall())
+                stream.readinto(file)
 
         except ResourceNotFoundError as exc:
             raise FileNotFoundError(

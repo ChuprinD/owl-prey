@@ -8,5 +8,8 @@ version = "0.1.0"
 description = "Pipeline for detecting owl-with-prey moments in nest-box videos."
 requires-python = ">=3.11"
 
+[project.scripts]
+owl-prey-detection = "owl_prey_detection.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]

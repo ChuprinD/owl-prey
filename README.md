@@ -22,12 +22,12 @@ Pipeline for finding likely owl-with-prey moments in nest-box videos. The projec
 |   `-- best.pt                         # Trained YOLO weights
 |-- src/owl_prey_detection/
 |   |-- cli.py                          # Pipeline entry point
+|   |-- audio.py                        # Audio extraction and loud interval detection
 |   |-- config.py                       # YAML config loading and validation
 |   |-- detector.py                     # Ultralytics YOLO wrapper
-|   |-- draw.py                         # Detection annotation rendering
 |   |-- frame_logic.py                  # Grouping and target-frame logic
 |   |-- pipeline.py                     # End-to-end video processing
-|   |-- ranking.py                      # Top-K frame selection
+|   |-- review.py                       # Top-K ranking and annotated review frames
 |   |-- video_io.py                     # OpenCV video reading
 |   `-- data_access/                    # Azure Blob access and input resolution
 |-- data/                               # Local data, downloads, indexes, examples
@@ -42,6 +42,7 @@ Pipeline for finding likely owl-with-prey moments in nest-box videos. The projec
 - A trained YOLO model at `models/best.pt`.
 - For Azure input: a valid Azure Storage connection string and container name.
 - For GPU inference: a compatible PyTorch/CUDA installation. The pinned `requirements.txt` can also run on CPU, but inference will be slower.
+- For audio-guided processing: MoviePy and FFmpeg support.
 
 ## Setup
 
@@ -105,12 +106,23 @@ inference:
   augment: false
   batch_size: 32
 
+postprocess:
+  min_conf_by_group:
+    owl: 0.25
+    prey: 0.16
+
 required_groups:
   - owl
   - prey
 
-top_k: 3
+top_k: 3                 # positive integer or all
 min_gap_seconds: 1.0
+
+audio:
+  enabled: false         # true runs audio-guided detection; false runs normal visual scan
+  threshold_db: -20.0    # louder audio regions above this threshold are scanned
+  padding_seconds: 2.0   # seconds added before/after detected audio events
+  min_event_seconds: 0.2 # ignore shorter audio events
 ```
 
 Input modes:
@@ -127,8 +139,9 @@ Detection controls:
 
 - `class_groups` maps YOLO labels to logical groups.
 - `required_groups` defines which groups must be present for a frame to become a candidate.
-- `top_k` controls how many annotated frames are saved for review.
-- `min_gap_seconds` avoids selecting near-duplicate top frames when possible.
+- `top_k` controls how many annotated frames are saved for review. Use a positive integer for the best N frames, or `all` to save every frame that passes postprocessing.
+- `min_gap_seconds` avoids selecting near-duplicate top frames when `top_k` is a number. It is not applied when `top_k: all`.
+- `audio.enabled` controls the audio-guided pipeline. Keep it `false` to process frames normally. Set it to `true` to first detect loud audio events, scan only frames inside those padded intervals, and write the same review CSV, annotated frames, and metadata outputs.
 
 ## Run the Pipeline
 
@@ -138,7 +151,7 @@ From the repository root:
 python -m owl_prey_detection.cli
 ```
 
-The CLI always reads `config.yaml`, validates the model and input settings, resolves the video, runs inference, and prints a short runtime summary.
+The project has one CLI. It always reads `config.yaml`, validates the model and input settings, resolves the video, runs inference, and prints a short runtime summary. When `audio.enabled: true`, the same pipeline scans only frames from detected audio intervals.
 
 Generated outputs are written under `output_dir`, for example `runs/demo`:
 
@@ -150,7 +163,7 @@ runs/demo/
     `-- top_*.jpg
 ```
 
-The CSV contains frame timestamps, owl/prey labels and confidence scores, detection JSON, and the path to each annotated review image.
+With `top_k: all`, the review CSV is named `top_all_for_review.csv`. The annotated images are saved in `review_top_frames/` in both modes. The CSV contains frame timestamps, owl/prey labels and confidence scores, detection JSON, and the path to each annotated review image.
 
 ## Review Predictions
 
@@ -168,7 +181,7 @@ runs/demo/validated_predictions.csv
 
 ## Output Files
 
-- `top{K}_for_review.csv`: ranked candidate frames for human review.
+- `top{K}_for_review.csv` or `top_all_for_review.csv`: candidate frames selected for human review.
 - `review_top_frames/`: annotated JPEG images for the selected top frames.
 - `run_metadata.json`: video metadata, runtime statistics, inference settings, frame counts, and selection settings.
 - `validated_predictions.csv`: reviewer decisions from the Streamlit app.
@@ -177,7 +190,7 @@ runs/demo/validated_predictions.csv
 
 - Core reusable code lives in `src/owl_prey_detection/`.
 - Notebooks are for exploration, inventory, and dataset preparation, not production pipeline logic.
-- Azure secrets are read only through `src/owl_prey_detection/data_access/secret_access.py`.
+- Azure credentials are loaded from `.env` only when Azure Blob access is used.
 - `data/` and `.env` are ignored by Git.
 
 ## Common Issues

@@ -5,7 +5,7 @@ input:
   # local or azure_blob
   source: local
 
-  blob_name: "Vosseveld/Vosseveld_ch2_20240610043904_20240610043955.mp4"
+  blob_name: "Meddo/ch2/Meddo_ch2_main_20250406151817_20250406151953.mp4"
 
   # For local:
   video_path: data/videos/demo1.mp4
@@ -23,21 +23,17 @@ inference:
   max_det: 2
   device: null
   augment: false
-  batch_size: 32
+  batch_size: 128
 
 postprocess:
   min_conf_by_group:
-    owl: 0.5
-    prey: 0.15
-  max_area_ratio_by_group:
     owl: 0.25
-  min_area_ratio_by_group:
-    prey: 0.00002
+    prey: 0.16
 
 class_groups:
   owl:
     - steenuil
-  prey:
+  prey: 
     - boismuis
     - larve
     - loopkever
@@ -55,5 +51,14 @@ required_groups:
   - owl
   - prey
 
-top_k: 3
-min_gap_seconds: 1.0
+# Positive integer for best N frames, or all for every frame after postprocessing.
+top_k: 5
+min_gap_seconds: 0.1
+
+audio:
+  # Set to true to run the audio-guided pipeline. Set to false to use the
+  # normal frame-scanning pipeline.
+  enabled: true
+  threshold_db: -20.0
+  padding_seconds: 2.0
+  min_event_seconds: 0.2
